@@ -1,0 +1,145 @@
+# Load the dataset
+file_path <- "C:/Users/lised/OneDrive/Documents/HOMEWORK CORPORATE FINANCE 3.0.xlsx"
+sheets <- excel_sheets(file_path)
+
+# Combine all sheets into one dataframe
+data <- lapply(sheets, function(sheet) {
+  read_excel(file_path, sheet = sheet) %>%
+    mutate(YEAR = as.numeric(sheet)) # Add a YEAR column based on the sheet name
+}) %>%
+  bind_rows()
+
+# Convert variables to numeric
+data <- data %>%
+  mutate(across(-c(YEAR, QUARTER, UNIQUE_CARRIER_NAME), as.numeric))
+
+# Create a 'period' variable
+data <- data %>%
+  mutate(
+    period = case_when(
+      YEAR <= 2019 ~ "Pre-Pandemic",
+      YEAR >= 2020 & YEAR <= 2021 ~ "During-Pandemic",
+      YEAR >= 2022 ~ "Post-Pandemic"
+    )
+  )
+
+# Calculate changes in Equity, Debt, and Dividends
+data <- data %>%
+  group_by(UNIQUE_CARRIER_NAME) %>%
+  arrange(YEAR, QUARTER) %>%
+  mutate(
+    Equity_Issuance = SH_HLD_EQUITY - lag(SH_HLD_EQUITY),
+    Debt_Issuance = LONG_TERM_DEBT - lag(LONG_TERM_DEBT),
+    Dividends = ifelse(RET_EARNINGS > 0, 1, 0)  # Example binary indicator
+  ) %>%
+  ungroup()
+
+# Filter out missing values
+data <- na.omit(data)
+
+# Convert 'period' to a factor
+data$period <- factor(data$period, levels = c("Pre-Pandemic", "During-Pandemic", "Post-Pandemic"))
+
+# Run the regression models
+# Regression 1: Equity Issuance
+lm_equity <- lm(
+  Equity_Issuance ~ period * (CASH + CURR_ASSETS + CURR_LIABILITIES + RET_EARNINGS + LONG_TERM_DEBT),
+  data = data
+)
+# Regression 2: Debt Issuance
+lm_debt <- lm(
+  Debt_Issuance ~ period * (CASH + CURR_ASSETS + CURR_LIABILITIES + RET_EARNINGS + LONG_TERM_DEBT),
+  data = data
+)
+# Regression 3: Dividends
+lm_dividends <- glm(
+  Dividends ~ period * (CASH + CURR_ASSETS + CURR_LIABILITIES + RET_EARNINGS + LONG_TERM_DEBT),
+  data = data,
+  family = binomial
+)
+
+
+# Create the first table for Equity Issuance
+stargazer(lm_equity,
+          type = "text",
+          title = "Regression Results: Equity Issuance",
+          covariate.labels = c("Cash", "Current Assets", "Current Liabilities", "Retained Earnings", "Long-Term Debt",
+                               "During-Pandemic", "Post-Pandemic",
+                               "During-Pandemic:Cash", "Post-Pandemic:Cash",
+                               "During-Pandemic:Current Assets", "Post-Pandemic:Current Assets",
+                               "During-Pandemic:Current Liabilities", "Post-Pandemic:Current Liabilities",
+                               "During-Pandemic:Retained Earnings", "Post-Pandemic:Retained Earnings",
+                               "During-Pandemic:Long-Term Debt", "Post-Pandemic:Long-Term Debt"),
+          align = TRUE,
+          no.space = TRUE,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          notes = "Significance codes: * p<0.05; ** p<0.01; *** p<0.001")
+
+# Create the second table for Debt Issuance
+stargazer(lm_debt,
+          type = "text",
+          title = "Regression Results: Debt Issuance",
+          covariate.labels = c("Cash", "Current Assets", "Current Liabilities", "Retained Earnings", "Long-Term Debt",
+                               "During-Pandemic", "Post-Pandemic",
+                               "During-Pandemic:Cash", "Post-Pandemic:Cash",
+                               "During-Pandemic:Current Assets", "Post-Pandemic:Current Assets",
+                               "During-Pandemic:Current Liabilities", "Post-Pandemic:Current Liabilities",
+                               "During-Pandemic:Retained Earnings", "Post-Pandemic:Retained Earnings",
+                               "During-Pandemic:Long-Term Debt", "Post-Pandemic:Long-Term Debt"),
+          align = TRUE,
+          no.space = TRUE,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          notes = "Significance codes: * p<0.05; ** p<0.01; *** p<0.001")
+
+# Create the third table for Dividends
+stargazer(lm_dividends,
+          type = "text",
+          title = "Regression Results: Dividends",
+          covariate.labels = c("Cash", "Current Assets", "Current Liabilities", "Retained Earnings", "Long-Term Debt",
+                               "During-Pandemic", "Post-Pandemic",
+                               "During-Pandemic:Cash", "Post-Pandemic:Cash",
+                               "During-Pandemic:Current Assets", "Post-Pandemic:Current Assets",
+                               "During-Pandemic:Current Liabilities", "Post-Pandemic:Current Liabilities",
+                               "During-Pandemic:Retained Earnings", "Post-Pandemic:Retained Earnings",
+                               "During-Pandemic:Long-Term Debt", "Post-Pandemic:Long-Term Debt"),
+          align = TRUE,
+          no.space = TRUE,
+          star.cutoffs = c(0.05, 0.01, 0.001),
+          notes = "Significance codes: * p<0.05; ** p<0.01; *** p<0.001")
+
+
+# Function to create a flextable from a regression model
+create_regression_table <- function(model, title) {
+  # Use broom::tidy to extract regression results
+  results <- tidy(model)
+  
+  # Create flextable
+  ft <- flextable(results)
+  ft <- set_header_labels(ft, term = "Variable", estimate = "Estimate", std.error = "Std. Error", statistic = "t/z value", p.value = "Pr(>|t|)")
+  ft <- add_header(ft, values = title, top = TRUE)
+  ft <- theme_vanilla(ft)
+  ft <- autofit(ft)
+  return(ft)
+}
+
+# Create the tables
+table1 <- create_regression_table(lm_equity, "Regression Results: Equity Issuance")
+table2 <- create_regression_table(lm_debt, "Regression Results: Debt Issuance")
+table3 <- create_regression_table(lm_dividends, "Regression Results: Dividends")
+
+# Create a Word document
+doc <- read_docx()
+
+# Add the tables to the document
+doc <- body_add_flextable(doc, table1)
+doc <- body_add_par(doc, value = "\n")  # Add a line break
+doc <- body_add_flextable(doc, table2)
+doc <- body_add_par(doc, value = "\n")
+doc <- body_add_flextable(doc, table3)
+
+# Save the Word document
+print(doc, target = "Regression_Tables.docx")
+
+# Print a message when done
+cat("Word document 'Regression_Tables.docx' created successfully!")
+
