@@ -1,0 +1,172 @@
+clear
+* === 1. IMPORTATION DES DONNÉES MÉTÉO (sheet1) ===
+import excel "C:/Users/lised/OneDrive/Bureau/STA-VIN-STRUCTURE_APPAREIL_PROD-C22-23/155F16002.xlsx", sheet("Sheet1") firstrow clear
+save meteo.dta, replace
+
+use meteo.dta
+* Renommer les variables de météo
+rename NUM_POSTE         station_id
+rename NOM_USUEL         station_name
+rename LAT               latitude
+rename LON               longitude
+rename ALTI              altitude_m
+rename AAAAMM            year_month
+rename RR                total_precip_mm
+rename NBJRR1            days_precip_1mm
+rename NBJRR5            days_precip_5mm
+rename NBJRR10           days_precip_10mm
+rename NBJRR30           days_precip_30mm
+rename NBJRR50           days_precip_50mm
+rename NBJRR100          days_precip_100mm
+rename PMERM             max_daily_rain_mm
+rename QPMERM            date_max_rain
+rename NBPMERM           nb_days_max_rain
+rename PMERMINAB         min_daily_rain_mm
+rename QPMERMINAB        date_min_rain
+rename PMERMINABDAT      nb_days_min_rain
+rename TX                max_temp_avg
+rename NBJTX30           nb_days_max_temp_30
+rename NBJTX35           nb_days_max_temp_35
+rename NBJTXI20          nb_days_max_temp_le20
+rename NBJTXI27          nb_days_max_temp_le27
+rename NBJTXS32          nb_days_max_temp_ge32
+rename TN                min_temp_avg
+rename TNMAXDAT          max_min_temp_date
+rename NBJTN5            nb_days_min_temp_5
+rename NBJTN10           nb_days_min_temp_10
+rename NBJTNI10          nb_days_min_temp_le10
+rename NBJTNI15          nb_days_min_temp_le15
+rename NBJTNI20          nb_days_min_temp_le20
+rename NBJTNS20          nb_days_min_temp_ge20
+rename NBJTNS25          nb_days_min_temp_ge25
+rename NBJGELEE          nb_frost_days
+rename TM                mean_temp
+rename TMM               max_monthly_avg_temp
+rename TMMIN             min_monthly_temp
+rename TMMAX             max_monthly_temp
+
+* Convertir year_month (ex : 202306) en date Stata
+* 1. Extraire année et mois depuis ym_str
+gen year = floor(year_month/100)
+gen month = year_month - year * 100
+destring year, replace
+
+
+gen periode_vigne = .
+replace periode_vigne = 1 if inlist(month, 3, 4)      
+* Débourrement
+replace periode_vigne = 2 if inlist(month, 5, 6)      
+* Floraison
+replace periode_vigne = 3 if inlist(month, 7, 8)      
+* Véraison
+replace periode_vigne = 4 if inlist(month, 9)         
+* Maturation
+replace periode_vigne = 5 if inlist(month, 10, 11, 12, 1, 2)  
+
+
+
+
+*generé région
+gen region = ""
+replace region = "Nouvelle-Aquitaine" if station_name == "BORDEAUX-MERIGNAC"
+replace region = "Bourgogne-Franche-Comté" if station_name == "DIJON-LONGVIC"
+gen drought_base = 30 - days_precip_1mm
+
+* Sauvegarde de la base météo
+save "meteo.dta", replace
+
+collapse (mean) temp=mean_temp (mean) precip=total_precip_mm (sum) heatwaves=nb_days_max_temp_35 (sum) drought=drought_base , by(region periode_vigne year)
+reshape wide temp precip heatwaves drought, i(region year) j(periode_vigne)
+save meteo_aggreg.dta, replace
+
+
+
+
+* === 2. IMPORTATION DES DONNÉES VIGNOBLES (sheet2) ===
+import excel "C:/Users/lised/OneDrive/Bureau/STA-VIN-STRUCTURE_APPAREIL_PROD-C22-23/155F16002.xlsx", sheet("Sheet2") firstrow clear
+save vin.dta, replace
+
+use vin.dta
+* Renommer les variables de vignoble
+rename annee                  year
+rename region*               region
+rename SUPERFICIES*TOUS*     area_total_wine_ha
+rename SUPERFICIES*AOP       area_aop_ha
+rename SUPERFICIES*VSIG      area_vsig_ha
+rename SUPERFICIES*IGP       area_igp_ha
+rename RENDEMENT*TOTAL       yield_total
+rename RENDEMENTS*AOP        yield_aop
+rename RENDEMENTS*VSIG       yield_vsig
+rename RENDEMENTS*IGP        yield_igp
+rename VinsRougesRosésetBlancsR         harvest_total
+rename RECOLTE*AOP           harvest_aop
+rename RECOLTE*VSIG          harvest_vsig
+rename RECOLTE*IGP           harvest_igp
+rename VinsRougesRosésetBlancsS          total_stocks
+
+
+destring year, replace
+
+merge 1:1 region year using meteo_aggreg.dta
+tab _merge
+drop if _merge != 3
+drop _merge
+
+gen temp_avg = (temp1 + temp2 + temp3 + temp4 + temp5)/5
+gen precip_avg = (precip1 + precip2 + precip3 + precip4 + precip5)/5
+gen drought_avg = (drought1 + drought2 + drought3 + drought4 + drought5)/5
+gen heatwaves_avg = (heatwaves1 + heatwaves2 + heatwaves3 + heatwaves4 + heatwaves5)/5
+
+
+* Sauvegarde de la base vignobles
+save "merge.dta", replace
+
+
+use merge.dta
+*regression
+reg harvest_total temp_avg precip_avg  heatwaves_avg drought_avg c.temp_avg#c.drought_avg area_total_wine_ha
+eststo reg13
+reg harvest_total temp1 temp2 temp3 temp4 temp5 precip1 precip2 precip3  precip4  precip5 heatwaves1 heatwaves2 heatwaves3 heatwaves4 heatwaves5 drought1 drought2 drought3 drought4 drought5 c.temp1#c.drought1 c.temp2#c.drought2 c.temp3#c.drought3 c.temp4#c.drought4 c.temp5#c.drought5 area_total_wine_ha
+eststo reg19
+
+* Bordeaux
+reg harvest_total temp_avg precip_avg  heatwaves_avg drought_avg c.temp_avg#c.drought_avg area_total_wine_ha if region == "Bourgogne-Franche-Comté"
+eststo reg14
+reg harvest_total temp1 temp2 temp3 temp4 temp5 precip1 precip2 precip3  precip4  precip5 heatwaves1 heatwaves2 heatwaves3 heatwaves4 heatwaves5 drought1 drought2 drought3 drought4 drought5 c.temp1#c.drought1 c.temp2#c.drought2 c.temp3#c.drought3 c.temp4#c.drought4 c.temp5#c.drought5 area_total_wine_ha if region == "Bourgogne-Franche-Comté"
+eststo reg20
+
+* Nouvelle-Aquitaine
+reg harvest_total temp_avg precip_avg  heatwaves_avg drought_avg c.temp_avg#c.drought_avg area_total_wine_ha if region == "Nouvelle-Aquitaine"
+eststo reg15
+reg harvest_total temp1 temp2 temp3 temp4 temp5 precip1 precip2 precip3  precip4  precip5 heatwaves1 heatwaves2 heatwaves3 heatwaves4 heatwaves5 drought1 drought2 drought3 drought4 drought5 c.temp1#c.drought1 c.temp2#c.drought2 c.temp3#c.drought3 c.temp4#c.drought4 c.temp5#c.drought5 area_total_wine_ha if region == "Nouvelle-Aquitaine"
+eststo reg21
+
+* AOP
+reg harvest_aop temp_avg precip_avg  heatwaves_avg drought_avg c.temp_avg#c.drought_avg area_aop_ha
+eststo reg16
+reg harvest_aop temp1 temp2 temp3 temp4 temp5 precip1 precip2 precip3  precip4  precip5 heatwaves1 heatwaves2 heatwaves3 heatwaves4 heatwaves5 drought1 drought2 drought3 drought4 drought5 c.temp1#c.drought1 c.temp2#c.drought2 c.temp3#c.drought3 c.temp4#c.drought4 c.temp5#c.drought5 area_aop_ha
+eststo reg22
+
+* IGP
+reg harvest_igp temp_avg precip_avg  heatwaves_avg drought_avg c.temp_avg#c.drought_avg area_igp_ha
+eststo reg17
+reg harvest_igp temp1 temp2 temp3 temp4 temp5 precip1 precip2 precip3  precip4  precip5 heatwaves1 heatwaves2 heatwaves3 heatwaves4 heatwaves5 drought1 drought2 drought3 drought4 drought5 c.temp1#c.drought1 c.temp2#c.drought2 c.temp3#c.drought3 c.temp4#c.drought4 c.temp5#c.drought5 area_igp_ha
+eststo reg23
+
+* VSIG
+reg harvest_vsig temp_avg precip_avg  heatwaves_avg drought_avg c.temp_avg#c.drought_avg area_vsig_ha
+eststo reg18
+reg harvest_vsig temp1 temp2 temp3 temp4 temp5 precip1 precip2 precip3  precip4  precip5 heatwaves1 heatwaves2 heatwaves3 heatwaves4 heatwaves5 drought1 drought2 drought3 drought4 drought5 c.temp1#c.drought1 c.temp2#c.drought2 c.temp3#c.drought3 c.temp4#c.drought4 c.temp5#c.drought5 area_vsig_ha
+eststo reg24
+
+* On crée le fichier avec la première régression
+esttab reg13 reg14 reg15 reg16 reg17 reg18 using resultats1.html,    replace title("Régression 1")     label b(3) se(3) star(* 0.1 ** 0.05 *** 0.01)
+
+
+esttab reg19 reg20 reg21 reg22 reg23 reg24 using resultats1.html,    append title("Régression 6")     label b(3) se(3) star(* 0.1 ** 0.05 *** 0.01)
+
+corr harvest_vsig temp_avg precip_avg heatwaves_avg area_total_wine_ha
+twoway(line temp_avg year), title("evolution tempC") ytitle("tempC") xtitle("year")
+twoway(line heatwaves_avg year), title("evolution day +35C") ytitle("tempC") xtitle("year")
+twoway(line precip_avg year), title("evolution pluie") ytitle("pluie mm") xtitle("year")
+twoway(line drought_avg year), title("evolution drought") ytitle("pluie mm") xtitle("year")
